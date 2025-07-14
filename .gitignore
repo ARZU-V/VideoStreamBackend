@@ -22,19 +22,7 @@ logs/
 *.log
 debug.log
 
-# -----------------------------------
-# FFmpeg Output
-*.m3u8
-*.ts
-*.mp4
-*.webm
-*.mov
-
-# -----------------------------------
-# Uploads (Store on Cloud or CDN instead)
-server/uploads/*
-!server/uploads/.gitkeep
-
+# 
 # -----------------------------------
 # System Files
 .DS_Store
