@@ -22,7 +22,47 @@ const server = createServer(app);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-app.use(cors());
+// Enhanced CORS configuration for mobile compatibility
+app.use(
+  cors({
+    origin:
+      process.env.NODE_ENV === "production"
+        ? [
+            "https://streamitbroski.vercel.app",
+            "https://your-frontend-domain.com",
+            "http://localhost:5173",
+            "http://localhost:3000",
+          ]
+        : true,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Range", "Accept-Ranges"],
+    exposedHeaders: ["Content-Range", "Accept-Ranges", "Content-Length"],
+  })
+);
+
+// Add mobile-friendly headers middleware
+app.use((req, res, next) => {
+  // Enable CORS for video streaming
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Range, Authorization"
+  );
+
+  // Mobile-specific headers for video streaming
+  res.header("X-Content-Type-Options", "nosniff");
+  res.header("X-Frame-Options", "SAMEORIGIN");
+
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
 app.use(express.json());
 
 // Serve static files (HLS + thumbnails)
