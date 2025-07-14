@@ -10,11 +10,6 @@ import { Storage } from "@google-cloud/storage";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
-const storage = new Storage({
-  keyFilename: "config/coral-muse-465911-a1-3642d056df99.json",
-}); // adjust path if needed
-const bucketName = "streamitbackend";
-
 export async function getSignedUrl(req, res) {
   const { filePath } = req.query; // e.g., 'images/filename.jpg' or 'videos/hls/uuid/index.m3u8'
   if (!filePath) return res.status(400).json({ error: "filePath is required" });
@@ -26,10 +21,7 @@ export async function getSignedUrl(req, res) {
   };
 
   try {
-    const [url] = await storage
-      .bucket(bucketName)
-      .file(filePath)
-      .getSignedUrl(options);
+    const [url] = await bucket.file(filePath).getSignedUrl(options);
     res.json({ url });
   } catch (err) {
     res
@@ -114,7 +106,12 @@ export const uploadVideo = [
       fs.mkdirSync(hlsOutputDir);
       const hlsPlaylist = path.join(hlsOutputDir, "index.m3u8");
       // Downscale to 1280x720, lower quality and audio bitrate for lower memory usage
-      const ffmpegCmd = `ffmpeg -i "${tempVideoPath}" -vf "scale=1280:720" -codec:v libx264 -crf 28 -codec:a aac -b:a 96k -strict -2 -hls_time 10 -hls_playlist_type vod -f hls "${hlsPlaylist}"`;
+      // Use ffmpeg-static path for Render deployment
+      const ffmpegPath =
+        process.env.NODE_ENV === "production"
+          ? "./node_modules/ffmpeg-static/ffmpeg"
+          : "ffmpeg";
+      const ffmpegCmd = `"${ffmpegPath}" -i "${tempVideoPath}" -vf "scale=1280:720" -codec:v libx264 -crf 28 -codec:a aac -b:a 96k -strict -2 -hls_time 10 -hls_playlist_type vod -f hls "${hlsPlaylist}"`;
       console.log("Running FFmpeg command:", ffmpegCmd);
       await new Promise((resolve, reject) => {
         exec(ffmpegCmd, (err, stdout, stderr) => {
@@ -169,12 +166,10 @@ export const uploadVideo = [
       console.error("Error message:", err.message);
       console.error("Error stack:", err.stack);
       console.error("Full error object:", err);
-      return res
-        .status(500)
-        .json({
-          error: "Failed to process and upload video",
-          details: err.message,
-        });
+      return res.status(500).json({
+        error: "Failed to process and upload video",
+        details: err.message,
+      });
     }
   },
 ];

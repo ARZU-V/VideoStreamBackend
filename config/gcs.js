@@ -5,16 +5,35 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Use the Render secret file path instead of local file
-const keyPath =
-  process.env.NODE_ENV === "production"
-    ? "/etc/secrets/coral-muse-465911-a1-3642d0c6df99.json"
-    : path.join(__dirname, "coral-muse-465911-a1-3642d056df99.json");
+// Use environment variable for GCS credentials instead of file path
+let storage;
 
-const storage = new Storage({
-  keyFilename: keyPath,
-  projectId: "coral-muse-465911",
-});
+if (process.env.NODE_ENV === "production") {
+  // For Render deployment, use environment variable
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    const credentials = JSON.parse(
+      process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+    );
+    storage = new Storage({
+      projectId: "coral-muse-465911",
+      credentials: credentials,
+    });
+  } else {
+    throw new Error(
+      "GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is required for production"
+    );
+  }
+} else {
+  // For local development, use local file
+  const keyPath = path.join(
+    __dirname,
+    "coral-muse-465911-a1-3642d056df99.json"
+  );
+  storage = new Storage({
+    keyFilename: keyPath,
+    projectId: "coral-muse-465911",
+  });
+}
 
 const bucket = storage.bucket("streamitbackend");
 
