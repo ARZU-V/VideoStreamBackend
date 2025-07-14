@@ -21,8 +21,17 @@ dist/
 logs/
 *.log
 debug.log
+server/config/*.json
+# Uploads (Store on Cloud or CDN instead)
+server/uploads/*
+!server/uploads/.gitkeep
+!server/uploads/**/*.mp4
+!server/uploads/**/*.webm
+!server/uploads/**/*.ts
+!server/uploads/**/*.m3u8
+!server/uploads/**/*.mov
+!server/uploads/**/*.png
 
-# 
 # -----------------------------------
 # System Files
 .DS_Store

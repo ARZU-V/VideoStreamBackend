@@ -5,12 +5,14 @@ const videoSchema = new mongoose.Schema({
   description: String,
   videoPath: String,
   imagePath: String,
+  videoUrl: String,
+  imageUrl: String,
   videoId: String,
   imageId: String,
   uploadedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
-    required: true,
+    required: false,
   },
   createdAt: { type: Date, default: Date.now },
 });

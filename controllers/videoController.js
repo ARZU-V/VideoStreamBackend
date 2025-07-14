@@ -1,100 +1,132 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { exec } from "child_process";
-import { fileURLToPath } from "url";
-import Video from "../models/video.js";
 import { v4 as uuidv4 } from "uuid";
+import Video from "../models/video.js";
+import bucket from "../config/gcs.js";
+import multer from "multer";
+import { Storage } from "@google-cloud/storage";
 
-// Support __dirname with ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const upload = multer({ storage: multer.memoryStorage() });
 
-/**
- * Upload video and convert to HLS format using FFmpeg
- */
-export const uploadVideo = async (req, res) => {
+const storage = new Storage({
+  keyFilename: "config/coral-muse-465911-a1-3642d056df99.json",
+}); // adjust path if needed
+const bucketName = "streamitbackend";
+
+export async function getSignedUrl(req, res) {
+  const { filePath } = req.query; // e.g., 'images/filename.jpg' or 'videos/hls/uuid/index.m3u8'
+  if (!filePath) return res.status(400).json({ error: "filePath is required" });
+
+  const options = {
+    version: "v4",
+    action: "read",
+    expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+  };
+
   try {
-    const { title, description } = req.body;
-    const files = req.files;
-
-    console.log("Request Body:", req.body); // Add this line to check the request body
-    console.log("Request Files:", req.files); // Add this line to check the uploaded files
-
-    const videoFile = files?.video?.[0];
-    const imageFile = files?.image?.[0];
-
-    if (!title) return res.status(400).json({ error: "Title is required" });
-    if (!videoFile)
-      return res.status(400).json({ error: "No video file uploaded" });
-    if (!imageFile)
-      return res.status(400).json({ error: "No image file uploaded" });
-    const videoId = uuidv4();
-    const imageId = uuidv4();
-
-    const videoOutputPath = path.join(
-      __dirname,
-      "../uploads/video/slots",
-      videoId
-    );
-    const imageOutputPath = path.join(__dirname, "../uploads/images");
-
-    fs.mkdirSync(videoOutputPath, { recursive: true });
-    fs.mkdirSync(imageOutputPath, { recursive: true });
-
-    const hlsPath = path.join(videoOutputPath, "index.m3u8");
-
-    const ffmpegCommand = `ffmpeg -i "${videoFile.path}" \
--codec:v libx264 -preset ultrafast -crf 28 \
--codec:a aac -b:a 64k \
--hls_time 30 -hls_playlist_type vod \
--hls_segment_filename "${videoOutputPath}/segment%03d.ts" \
--threads 2 \
--start_number 0 \
-"${hlsPath}"`;
-
-    exec(ffmpegCommand, async (error) => {
-      if (error) {
-        console.error("FFmpeg error:", error.message);
-        return res.status(500).json({ error: "Video processing failed" });
-      }
-
-      try {
-        fs.unlinkSync(videoFile.path);
-        const imageExtension = path.extname(imageFile.originalname);
-        const renamedImagePath = path.join(
-          imageOutputPath,
-          `${imageId}${imageExtension}`
-        );
-        fs.renameSync(imageFile.path, renamedImagePath);
-
-        const video = new Video({
-          title,
-          description,
-          videoPath: hlsPath,
-          imagePath: renamedImagePath,
-          videoId,
-          imageId,
-          uploadedBy: req.user.id, // Add user ID to video
-        });
-
-        await video.save();
-
-        res.status(201).json({
-          message: "Video and image uploaded successfully",
-          videoUrl: `/uploads/video/slots/${videoId}/index.m3u8`,
-          imageUrl: `/uploads/images/${imageId}${imageExtension}`,
-          video,
-        });
-      } catch (dbError) {
-        console.error("Database error:", dbError.message);
-        res.status(500).json({ error: "Failed to save video details" });
-      }
-    });
-  } catch (error) {
-    console.error("Upload error:", error.message);
-    res.status(500).json({ error: "Video upload failed" });
+    const [url] = await storage
+      .bucket(bucketName)
+      .file(filePath)
+      .getSignedUrl(options);
+    res.json({ url });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Failed to generate signed URL", details: err });
   }
-};
+}
+
+export const uploadVideo = [
+  upload.fields([
+    { name: "video", maxCount: 1 },
+    { name: "image", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    console.log("uploadVideo endpoint hit");
+    if (!req.files || !req.files.video || !req.files.image) {
+      console.error("Missing video or image file:", req.files);
+      return res
+        .status(400)
+        .json({ error: "Both video and image files are required." });
+    }
+    const videoFile = req.files.video[0];
+    const imageFile = req.files.image[0];
+    const { title, description } = req.body;
+    const videoId = uuidv4();
+    try {
+      // 1. Upload image to GCS
+      const imageBlob = bucket.file(
+        "images/" + Date.now() + "-" + imageFile.originalname
+      );
+      const imageStream = imageBlob.createWriteStream({
+        resumable: false,
+        contentType: imageFile.mimetype,
+      });
+      await new Promise((resolve, reject) => {
+        imageStream.on("error", reject);
+        imageStream.on("finish", resolve);
+        imageStream.end(imageFile.buffer);
+      });
+      const imageUrl = `https://storage.googleapis.com/${bucket.name}/${imageBlob.name}`;
+      console.log("Image uploaded to:", imageUrl);
+
+      // 2. Save original video to temp file
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "hls-"));
+      const tempVideoPath = path.join(tempDir, videoFile.originalname);
+      fs.writeFileSync(tempVideoPath, videoFile.buffer);
+
+      // 3. Convert video to HLS with FFmpeg
+      const hlsOutputDir = path.join(tempDir, "hls");
+      fs.mkdirSync(hlsOutputDir);
+      const hlsPlaylist = path.join(hlsOutputDir, "index.m3u8");
+      // Downscale to 1280x720, lower quality and audio bitrate for lower memory usage
+      const ffmpegCmd = `ffmpeg -i "${tempVideoPath}" -vf "scale=1280:720" -codec:v libx264 -crf 28 -codec:a aac -b:a 96k -strict -2 -hls_time 10 -hls_playlist_type vod -f hls "${hlsPlaylist}"`;
+      console.log("Running FFmpeg:", ffmpegCmd);
+      await new Promise((resolve, reject) => {
+        exec(ffmpegCmd, (err, stdout, stderr) => {
+          if (err) {
+            console.error("FFmpeg error:", err, stderr);
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      // 4. Upload HLS output to GCS
+      const hlsFiles = fs.readdirSync(hlsOutputDir);
+      for (const file of hlsFiles) {
+        const localPath = path.join(hlsOutputDir, file);
+        const gcsPath = `videos/hls/${videoId}/${file}`;
+        await bucket.upload(localPath, { destination: gcsPath });
+        console.log("Uploaded HLS file to GCS:", gcsPath);
+      }
+      const hlsUrl = `https://storage.googleapis.com/${bucket.name}/videos/hls/${videoId}/index.m3u8`;
+
+      // 5. Save metadata to MongoDB
+      const video = new Video({
+        title,
+        description,
+        videoUrl: hlsUrl,
+        imageUrl,
+        uploadedBy: req.user?.id || null,
+      });
+      await video.save();
+
+      // 6. Clean up temp files
+      fs.rmSync(tempDir, { recursive: true, force: true });
+
+      return res.status(200).json({ videoUrl: hlsUrl, imageUrl, video });
+    } catch (err) {
+      console.error("Upload error:", err);
+      return res
+        .status(500)
+        .json({ error: "Failed to process and upload video", details: err });
+    }
+  },
+];
 
 /**
  * Stream HLS video or TS segments
@@ -164,27 +196,28 @@ export const streamVideo = async (req, res) => {
  */
 export const getAllVideos = async (req, res) => {
   try {
+    console.log("getAllVideos called");
     const videos = await Video.find(
       {},
-      "title imagePath videoId description"
-    ).sort({
-      createdAt: -1,
-    });
+      "title imageUrl videoUrl description createdAt"
+    ).sort({ createdAt: -1 });
+    console.log("Videos fetched from MongoDB:", videos);
 
-    console.log("Videos from DB:", videos); // Add this line to log the raw data from the database
+    // Only include videos with valid GCS URLs
+    const formatted = videos
+      .filter((v) => v.imageUrl && v.videoUrl)
+      .map((v) => ({
+        title: v.title,
+        imageUrl: v.imageUrl,
+        videoUrl: v.videoUrl,
+        description: v.description,
+        createdAt: v.createdAt,
+        _id: v._id,
+      }));
 
-    const formatted = videos.map((v) => ({
-      title: v.title,
-      imageUrl: `/uploads/images/${path.basename(v.imagePath)}`,
-      videoId: v.videoId,
-      description: v.description,
-    }));
-
-    console.log("Formatted Videos:", formatted); // Add this line to log the formatted data
-
-    res.status(200).json({ videos: formatted });
+    res.status(200).json(formatted);
   } catch (error) {
-    console.error("Error fetching videos:", error.message);
-    res.status(500).json({ error: "Failed to fetch videos" });
+    console.error("Error in getAllVideos:", error);
+    res.status(500).json({ error: "Failed to fetch videos", details: error });
   }
 };

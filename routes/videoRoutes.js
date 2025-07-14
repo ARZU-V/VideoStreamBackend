@@ -4,6 +4,7 @@ import {
   uploadVideo,
   streamVideo,
   getAllVideos,
+  getSignedUrl,
 } from "../controllers/videoController.js";
 import { protect } from "../middlewares/auth.js";
 
@@ -34,6 +35,7 @@ const upload = multer({ storage }).fields([
 
 const router = express.Router();
 router.get("/allvideo", getAllVideos);
-router.post("/upload", protect, upload, uploadVideo);
+router.post("/upload", uploadVideo);
 router.get("/stream/:id/:file", streamVideo);
+router.get("/signed-url", getSignedUrl);
 export default router;
