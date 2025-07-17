@@ -100,18 +100,36 @@ export const uploadVideo = [
       fs.writeFileSync(tempVideoPath, videoFile.buffer);
       console.log("Video saved to temp path:", tempVideoPath);
 
-      // 3. Convert video to HLS with FFmpeg
-      console.log("=== STEP 3: Converting video to HLS ===");
+      // 3. Convert video to adaptive bitrate HLS with FFmpeg
+      console.log("=== STEP 3: Converting video to adaptive bitrate HLS ===");
       const hlsOutputDir = path.join(tempDir, "hls");
       fs.mkdirSync(hlsOutputDir);
-      const hlsPlaylist = path.join(hlsOutputDir, "index.m3u8");
-      // Downscale to 1280x720, lower quality and audio bitrate for lower memory usage
+      const masterPlaylist = path.join(hlsOutputDir, "index.m3u8");
       // Use ffmpeg-static path for Render deployment
       const ffmpegPath =
         process.env.NODE_ENV === "production"
           ? "./node_modules/ffmpeg-static/ffmpeg"
           : "ffmpeg";
-      const ffmpegCmd = `"${ffmpegPath}" -i "${tempVideoPath}" -vf "scale=1280:720" -codec:v libx264 -crf 28 -codec:a aac -b:a 96k -strict -2 -hls_time 10 -hls_playlist_type vod -f hls "${hlsPlaylist}"`;
+      // Adaptive bitrate renditions: 1080p, 720p, 480p, 360p
+      const ffmpegCmd = `"${ffmpegPath}" -i "${tempVideoPath}" \
+        -filter_complex "[0:v]split=4[v1][v2][v3][v4]; \
+          [v1]scale=w=1920:h=1080[v1out]; \
+          [v2]scale=w=1280:h=720[v2out]; \
+          [v3]scale=w=854:h=480[v3out]; \
+          [v4]scale=w=426:h=240[v4out]" \
+        -map "[v1out]" -c:v:0 libx264 -b:v:0 5000k -preset veryfast -g 48 -sc_threshold 0 \
+        -map "[v2out]" -c:v:1 libx264 -b:v:1 3000k -preset veryfast -g 48 -sc_threshold 0 \
+        -map "[v3out]" -c:v:2 libx264 -b:v:2 1200k -preset veryfast -g 48 -sc_threshold 0 \
+        -map "[v4out]" -c:v:3 libx264 -b:v:3 400k -preset veryfast -g 48 -sc_threshold 0 \
+        -map a:0 -c:a:0 aac -b:a:0 192k \
+        -map a:0 -c:a:1 aac -b:a:1 128k \
+        -map a:0 -c:a:2 aac -b:a:2 96k \
+        -map a:0 -c:a:3 aac -b:a:3 64k \
+        -f hls -hls_time 6 -hls_playlist_type vod \
+        -hls_segment_filename \"${hlsOutputDir}/v%v/segment_%03d.ts\" \
+        -master_pl_name index.m3u8 \
+        -var_stream_map \"v:0,a:0 v:1,a:1 v:2,a:2 v:3,a:3\" \
+        \"${hlsOutputDir}/v%v/index.m3u8\"`;
       console.log("Running FFmpeg command:", ffmpegCmd);
       await new Promise((resolve, reject) => {
         exec(ffmpegCmd, (err, stdout, stderr) => {
@@ -127,19 +145,34 @@ export const uploadVideo = [
         });
       });
 
-      // 4. Upload HLS output to GCS
+      // 4. Recursively upload HLS output to GCS
       console.log("=== STEP 4: Uploading HLS files to GCS ===");
-      const hlsFiles = fs.readdirSync(hlsOutputDir);
-      console.log("HLS files to upload:", hlsFiles);
+      function walkDir(dir, fileList = [], relPath = "") {
+        const files = fs.readdirSync(dir);
+        files.forEach((file) => {
+          const filePath = path.join(dir, file);
+          const relFilePath = path.join(relPath, file);
+          if (fs.statSync(filePath).isDirectory()) {
+            walkDir(filePath, fileList, relFilePath);
+          } else {
+            fileList.push({ abs: filePath, rel: relFilePath });
+          }
+        });
+        return fileList;
+      }
+      const hlsFiles = walkDir(hlsOutputDir);
+      console.log(
+        "HLS files to upload:",
+        hlsFiles.map((f) => f.rel)
+      );
       for (const file of hlsFiles) {
-        const localPath = path.join(hlsOutputDir, file);
-        const gcsPath = `videos/hls/${videoId}/${file}`;
-        console.log("Uploading file:", localPath, "to GCS path:", gcsPath);
-        await bucket.upload(localPath, { destination: gcsPath });
+        const gcsPath = `videos/hls/${videoId}/${file.rel.replace(/\\/g, "/")}`;
+        console.log("Uploading file:", file.abs, "to GCS path:", gcsPath);
+        await bucket.upload(file.abs, { destination: gcsPath });
         console.log("Uploaded HLS file to GCS:", gcsPath);
       }
       const hlsUrl = `https://storage.googleapis.com/${bucket.name}/videos/hls/${videoId}/index.m3u8`;
-      console.log("Final HLS URL:", hlsUrl);
+      console.log("Final HLS master playlist URL:", hlsUrl);
 
       // 5. Save metadata to MongoDB
       console.log("=== STEP 5: Saving to MongoDB ===");
