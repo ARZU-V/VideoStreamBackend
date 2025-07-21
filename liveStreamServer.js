@@ -33,11 +33,11 @@ wss.on("connection", (ws) => {
     "-f",
     "hls",
     "-hls_time",
-    "1", // Reduced from 2 to 1 second for lower latency
+    "3", // Increased from 2 to 3 seconds for more stable segments
     "-hls_list_size",
-    "3", // Reduced from 5 to 3 segments
+    "8", // Increased from 6 to 8 segments for better buffering
     "-hls_flags",
-    "delete_segments+append_list", // Better for live streaming
+    "delete_segments+append_list+independent_segments+temp_file", // Add temp_file for atomic segment writing
     "-hls_segment_filename",
     path.join(streamDir, "segment_%03d.ts"),
     "-preset",
@@ -45,7 +45,7 @@ wss.on("connection", (ws) => {
     "-crf",
     "28", // Slightly lower quality for faster encoding
     "-g",
-    "30", // Keyframe interval
+    "90", // Keyframe interval: 30fps x 3s = 90
     "-sc_threshold",
     "0", // Disable scene change detection
     "-tune",

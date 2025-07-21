@@ -65,10 +65,20 @@ router.get("/stream/:streamId/:file", (req, res) => {
     // Set appropriate headers for HLS content
     if (file.endsWith(".m3u8")) {
       res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, proxy-revalidate"
+      );
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
     } else if (file.endsWith(".ts")) {
       res.setHeader("Content-Type", "video/MP2T");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, proxy-revalidate"
+      );
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
     }
 
     res.sendFile(filePath);

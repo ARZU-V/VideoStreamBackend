@@ -13,6 +13,7 @@ import { spawn } from "child_process";
 import ffmpegPath from "ffmpeg-static";
 
 import { fileURLToPath } from "url";
+import "./models/comment.js";
 
 dotenv.config();
 connectDB();

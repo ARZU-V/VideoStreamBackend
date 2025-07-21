@@ -6,6 +6,7 @@ import {
   getAllVideos,
   getSignedUrl,
 } from "../controllers/videoController.js";
+import { getComments, postComment } from "../controllers/commentController.js";
 import { protect } from "../middlewares/auth.js";
 
 import path from "path";
@@ -38,4 +39,9 @@ router.get("/allvideo", getAllVideos);
 router.post("/upload", uploadVideo);
 router.get("/stream/:id/:file", streamVideo);
 router.get("/signed-url", getSignedUrl);
+
+// Comments API
+router.get("/:videoId/comments", getComments);
+router.post("/:videoId/comments", protect, postComment);
+
 export default router;
