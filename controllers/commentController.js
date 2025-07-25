@@ -1,5 +1,6 @@
 import Comment from "../models/comment.js";
 import Video from "../models/video.js";
+import User from "../models/user.js";
 
 // Get comments for a video
 export const getComments = async (req, res) => {
@@ -23,9 +24,9 @@ export const postComment = async (req, res) => {
     if (!text) return res.status(400).json({ error: "Comment text required" });
     let username = "Anonymous";
     if (req.user && req.user.id) {
-      // Try to get username from user model
-      const User = (await import("../models/user.js")).default;
+      console.log("Looking up user for comment:", req.user.id);
       const userDoc = await User.findById(req.user.id).lean();
+      console.log("User doc found:", userDoc);
       if (userDoc && userDoc.username) {
         username = userDoc.username;
       }
@@ -39,6 +40,7 @@ export const postComment = async (req, res) => {
     await comment.save();
     res.status(201).json(comment);
   } catch (err) {
+    console.error("Error posting comment:", err);
     res.status(500).json({ error: "Failed to post comment" });
   }
 };
